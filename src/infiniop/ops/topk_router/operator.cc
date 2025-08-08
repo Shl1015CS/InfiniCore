@@ -8,6 +8,9 @@
 #if defined(ENABLE_NVIDIA_API) || defined(ENABLE_ILUVATAR_API)
 #include "nvidia/topk_router_nvidia.cuh"
 #endif
+#ifdef ENABLE_ILUVATAR_API
+#include "iluvatar/topk_router_iluvatar.h"
+#endif
 #ifdef ENABLE_CAMBRICON_API
 #include "bang/topk_router_bang.h"
 #endif
@@ -61,7 +64,7 @@ __C infiniStatus_t infiniopCreateTopkRouterDescriptor(
         CREATE(INFINI_DEVICE_NVIDIA, nvidia);
 #endif
 #ifdef ENABLE_ILUVATAR_API
-        CREATE(INFINI_DEVICE_ILUVATAR, nvidia);
+        CREATE(INFINI_DEVICE_ILUVATAR, iluvatar);
 #endif
 #ifdef ENABLE_CAMBRICON_API
         CREATE(INFINI_DEVICE_CAMBRICON, bang);
@@ -105,7 +108,7 @@ infiniopGetTopkRouterWorkspaceSize(
         GET(INFINI_DEVICE_NVIDIA, nvidia);
 #endif
 #ifdef ENABLE_ILUVATAR_API
-        GET(INFINI_DEVICE_ILUVATAR, nvidia);
+        GET(INFINI_DEVICE_ILUVATAR, iluvatar);
 #endif
 #ifdef ENABLE_CAMBRICON_API
         GET(INFINI_DEVICE_CAMBRICON, bang);
@@ -156,7 +159,7 @@ __C infiniStatus_t infiniopTopkRouter(
         CALCULATE(INFINI_DEVICE_NVIDIA, nvidia);
 #endif
 #ifdef ENABLE_ILUVATAR_API
-        CALCULATE(INFINI_DEVICE_ILUVATAR, nvidia);
+        CALCULATE(INFINI_DEVICE_ILUVATAR, iluvatar);
 #endif
 #ifdef ENABLE_CAMBRICON_API
         CALCULATE(INFINI_DEVICE_CAMBRICON, bang);
@@ -198,7 +201,7 @@ infiniopDestroyTopkRouterDescriptor(infiniopTopkRouterDescriptor_t desc) {
         DELETE(INFINI_DEVICE_NVIDIA, nvidia);
 #endif
 #ifdef ENABLE_ILUVATAR_API
-        DELETE(INFINI_DEVICE_ILUVATAR, nvidia);
+        DELETE(INFINI_DEVICE_ILUVATAR, iluvatar);
 #endif
 #ifdef ENABLE_CAMBRICON_API
         DELETE(INFINI_DEVICE_CAMBRICON, bang);

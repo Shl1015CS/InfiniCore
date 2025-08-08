@@ -26,7 +26,8 @@ _TEST_CASES = [
     # batch_size, seq_len, hidden_size, n_routed_experts, top_k, n_group, topk_group, routed_scaling_factor, norm_topk_prob
     (2, 4, 512, 64, 6, 8, 2, 1.0, True),      # 典型DeepSeek v3配置
     (1, 8, 1024, 128, 8, 16, 4, 1.0, True),   # 更大的expert数量
-    (4, 16, 2048, 256, 16, 32, 8, 2.0, False), # 不同的scaling factor
+    (4, 16, 2048, 256, 16, 32, 8, 2.0, False), # 不同的scaling factor（不归一化）
+    (1, 2, 64, 16, 4, 4, 2, 1.0, False),      # 小尺寸+不归一化，便于DEBUG核对
 ]
 
 # Data types used for testing  
@@ -75,8 +76,14 @@ def deepseek_v3_topk_router_reference(input_tensor, weight, top_k, n_group, topk
         weight.type(torch.float32)
     )
     
+    # Debug: 打印第一个token的前8个router_logits
+    print(f"DEBUG TORCH: First token router_logits before sigmoid (first 8): {router_logits[0, :8].tolist()}")
+    
     # 应用sigmoid激活
     scores = router_logits.sigmoid()
+    
+    # Debug: 打印第一个token的前8个sigmoid结果
+    print(f"DEBUG TORCH: First token router_logits after sigmoid (first 8): {scores[0, :8].tolist()}")
     
     # DeepSeek v3 style top-k selection with grouping
     def get_topk_indices_deepseek_v3(scores):
@@ -90,6 +97,11 @@ def deepseek_v3_topk_router_reference(input_tensor, weight, top_k, n_group, topk
         
         # Step 2: 选择top groups
         group_idx = torch.topk(group_scores, k=topk_group, dim=-1, sorted=False)[1]
+        
+        # Debug: 打印第一个token的组选择
+        if batch_seq_len > 0:
+            print(f"DEBUG TORCH: First token group_scores: {group_scores[0].tolist()}")
+            print(f"DEBUG TORCH: First token selected groups: {group_idx[0].tolist()}")
         
         # Step 3: 创建group mask
         group_mask = torch.zeros_like(group_scores)
@@ -236,21 +248,53 @@ def test(
         print("Reference weights:", ref_weights) 
         print("Library weights:", topk_weights.actual_tensor())
 
-    # For indices, we check if they are valid expert indices
-    assert torch.all(topk_indices.actual_tensor() >= 0)
-    assert torch.all(topk_indices.actual_tensor() < n_routed_experts)
-    
-    # For weights, we check basic properties
-    lib_weights = topk_weights.actual_tensor()
-    assert torch.all(lib_weights >= 0)  # Weights should be non-negative
-    
-    # Check if normalization was applied correctly (when enabled)
+    # Pull lib outputs
+    lib_idx = topk_indices.actual_tensor().to(torch.int64)
+    lib_weights = topk_weights.actual_tensor().to(torch.float32)
+
+    # 基本范围检查
+    assert torch.all(lib_idx >= 0)
+    assert torch.all(lib_idx < n_routed_experts)
+    assert torch.all(lib_weights >= 0)
+
+    # 与参考实现严格对比（按索引对齐后逐元素比较）
+    # 将每个token的 (index->weight) 做映射并比较集合完全一致
+    BxS = batch_size * seq_len
+    ref_idx_long = ref_indices.to(torch.int64)
+    ref_w = ref_weights.to(torch.float32)
+
+    # 排序对齐：按索引升序排序后比较
+    def sort_by_index(idx, w):
+        sort_idx = torch.argsort(idx, dim=-1)
+        idx_sorted = torch.gather(idx, -1, sort_idx)
+        w_sorted = torch.gather(w, -1, sort_idx)
+        return idx_sorted, w_sorted
+
+    lib_idx_s, lib_w_s = sort_by_index(lib_idx, lib_weights)
+    ref_idx_s, ref_w_s = sort_by_index(ref_idx_long, ref_w)
+
+    # 索引集合必须一致
+    assert torch.equal(lib_idx_s, ref_idx_s), "Top-k indices mismatch with reference"
+
+    # 权重对齐比较
     if norm_topk_prob:
+        # 归一化开启：逐元素与参考一致
+        assert torch.allclose(lib_w_s, ref_w_s, atol=atol*10, rtol=rtol*10), "Top-k weights mismatch (normalized)"
+        # 和应接近 scaling 因子
         weights_sum = lib_weights.sum(dim=-1)
         expected_sum = torch.ones_like(weights_sum) * routed_scaling_factor
         assert torch.allclose(weights_sum, expected_sum, atol=atol*10, rtol=rtol*10)
+    else:
+        # 不归一化：逐元素与参考一致（仅额外乘以scaling）
+        assert torch.allclose(lib_w_s, ref_w_s, atol=atol*10, rtol=rtol*10), "Top-k weights mismatch (unnormalized)"
 
-    print("✓ DeepSeekV3TopkRouter test passed: indices are valid and weights are properly normalized")
+    if DEBUG:
+        print("Ref idx:\n", ref_idx_s)
+        print("Lib idx:\n", lib_idx_s)
+        print("Ref w:\n", ref_w_s)
+        print("Lib w:\n", lib_w_s)
+
+    print("✓ DeepSeekV3TopkRouter test passed: outputs match PyTorch reference")
 
     # Profiling workflow
     if PROFILE:
